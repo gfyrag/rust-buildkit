@@ -1,18 +1,19 @@
-use std::io::{self, stdin, stdout};
+use std::io::{self, Read, stdin, stdout, Write};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use pin_project::pin_project;
 use tokio::io::*;
+use tokio::io::unix::AsyncFd;
 use tonic::transport::Uri;
 
 #[pin_project]
 pub struct StdioSocket {
     #[pin]
-    reader: PollEvented<async_stdio::EventedStdin>,
+    reader: AsyncFd<async_stdio::SourceStdin>,
 
     #[pin]
-    writer: PollEvented<async_stdio::EventedStdout>,
+    writer: AsyncFd<async_stdio::SourceStdout>,
 }
 
 pub async fn stdio_connector(_: Uri) -> io::Result<StdioSocket> {
@@ -22,124 +23,141 @@ pub async fn stdio_connector(_: Uri) -> io::Result<StdioSocket> {
 impl StdioSocket {
     pub fn try_new() -> io::Result<Self> {
         Ok(StdioSocket {
-            reader: PollEvented::new(async_stdio::EventedStdin::try_new(stdin())?)?,
-            writer: PollEvented::new(async_stdio::EventedStdout::try_new(stdout())?)?,
+            reader: AsyncFd::new(async_stdio::SourceStdin::try_new(stdin())?)?,
+            writer: AsyncFd::new(async_stdio::SourceStdout::try_new(stdout())?)?,
         })
     }
 }
 
 impl AsyncRead for StdioSocket {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize>> {
-        self.project().reader.poll_read(cx, buf)
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<Result<()>> {
+        let mut poll = self.project();
+        let poll = poll.reader.poll_read_ready_mut(cx)?;
+
+        match poll {
+            Poll::Ready(mut v) => {
+                let buf = buf.initialized_mut();
+                v.get_inner_mut().read(buf).unwrap();
+
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => Poll::Pending
+        }
+        //self.project().reader.poll_read(cx, buf)
     }
 }
 
 impl AsyncWrite for StdioSocket {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        self.project().writer.poll_write(cx, buf)
+        let mut poll = self.project();
+        let poll = poll.writer.poll_write_ready_mut(cx)?;
+        match poll {
+            Poll::Ready(mut v) => {
+                Poll::Ready(Ok(v.get_inner_mut().write(buf).unwrap()))
+            }
+            Poll::Pending => Poll::Pending
+        }
+        //self.project().writer.poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.project().writer.poll_flush(cx)
+        let mut poll = self.project();
+        let poll = poll.writer.poll_write_ready_mut(cx)?;
+        match poll {
+            Poll::Ready(mut v) => Poll::Ready(v.get_inner_mut().flush()),
+            Poll::Pending => Poll::Pending
+        }
+        //self.project().writer.poll_flush(cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.project().writer.poll_shutdown(cx)
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
+        // let mut poll = self.project();
+        // let poll = poll.writer.poll_write_ready_mut(cx)?;
+        // match poll {
+        //     Poll::Ready(mut v) => Poll::Ready(v.get_inner_mut().flush()),
+        //     Poll::Pending => Poll::Pending
+        // }
+        //self.project().writer.poll_shutdown(cx)
     }
 }
 
 mod async_stdio {
     use std::io::{self, Read, Stdin, Stdout, Write};
+    use std::os::fd::RawFd;
     use std::os::unix::io::AsRawFd;
 
-    use mio::event::Evented;
-    use mio::unix::EventedFd;
-    use mio::{Poll, PollOpt, Ready, Token};
+    use libc::{F_GETFL, F_SETFL, fcntl, O_NONBLOCK};
+    use mio::{Interest, Registry, Token};
+    use mio::event::Source;
+    use mio::unix::SourceFd;
 
-    use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
+    pub struct SourceStdin(Stdin);
+    pub struct SourceStdout(Stdout);
 
-    pub struct EventedStdin(Stdin);
-    pub struct EventedStdout(Stdout);
-
-    impl EventedStdin {
+    impl SourceStdin {
         pub fn try_new(stdin: Stdin) -> io::Result<Self> {
             set_non_blocking_flag(&stdin)?;
 
-            Ok(EventedStdin(stdin))
+            Ok(SourceStdin(stdin))
         }
     }
 
-    impl EventedStdout {
+    impl AsRawFd for SourceStdin {
+        fn as_raw_fd(&self) -> RawFd {
+            return self.0.as_raw_fd()
+        }
+    }
+
+    impl SourceStdout {
         pub fn try_new(stdout: Stdout) -> io::Result<Self> {
             set_non_blocking_flag(&stdout)?;
 
-            Ok(EventedStdout(stdout))
+            Ok(SourceStdout(stdout))
         }
     }
 
-    impl Evented for EventedStdin {
-        fn register(
-            &self,
-            poll: &Poll,
-            token: Token,
-            interest: Ready,
-            opts: PollOpt,
-        ) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).register(poll, token, interest, opts)
-        }
-
-        fn reregister(
-            &self,
-            poll: &Poll,
-            token: Token,
-            interest: Ready,
-            opts: PollOpt,
-        ) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).reregister(poll, token, interest, opts)
-        }
-
-        fn deregister(&self, poll: &Poll) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).deregister(poll)
+    impl AsRawFd for SourceStdout {
+        fn as_raw_fd(&self) -> RawFd {
+            return self.0.as_raw_fd()
         }
     }
 
-    impl Read for EventedStdin {
+    impl Source for SourceStdin {
+        fn register(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).register(registry, token, interests)
+        }
+
+        fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).reregister(registry, token, interests)
+        }
+
+        fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).deregister(registry)
+        }
+    }
+
+    impl Read for SourceStdin {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.0.read(buf)
         }
     }
 
-    impl Evented for EventedStdout {
-        fn register(
-            &self,
-            poll: &Poll,
-            token: Token,
-            interest: Ready,
-            opts: PollOpt,
-        ) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).register(poll, token, interest, opts)
+    impl Source for SourceStdout {
+        fn register(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).register(registry, token, interests)
         }
 
-        fn reregister(
-            &self,
-            poll: &Poll,
-            token: Token,
-            interest: Ready,
-            opts: PollOpt,
-        ) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).reregister(poll, token, interest, opts)
+        fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).reregister(registry, token, interests)
         }
 
-        fn deregister(&self, poll: &Poll) -> io::Result<()> {
-            EventedFd(&self.0.as_raw_fd()).deregister(poll)
+        fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+            SourceFd(&self.0.as_raw_fd()).deregister(registry)
         }
     }
 
-    impl Write for EventedStdout {
+    impl Write for SourceStdout {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.write(buf)
         }

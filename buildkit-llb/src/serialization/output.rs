@@ -1,6 +1,8 @@
-use buildkit_proto::pb;
+use std::io::Write;
 use prost::Message;
 use sha2::{Digest, Sha256};
+
+use buildkit_proto::pb;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Node {
@@ -23,8 +25,8 @@ impl Node {
 
     pub fn get_digest(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
-        hasher.input(&bytes);
+        hasher.write_all(bytes).unwrap();
 
-        format!("sha256:{:x}", hasher.result())
+        format!("sha256:{:x}", hasher.finalize())
     }
 }
