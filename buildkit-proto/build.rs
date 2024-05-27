@@ -1,4 +1,7 @@
-const DEFS: &[&str] = &["proto/github.com/moby/buildkit/frontend/gateway/pb/gateway.proto"];
+const DEFS: &[&str] = &[
+    "proto/github.com/moby/buildkit/api/services/control/control.proto",
+    "proto/github.com/moby/buildkit/frontend/gateway/pb/gateway.proto"
+];
 const PATHS: &[&str] = &["proto"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

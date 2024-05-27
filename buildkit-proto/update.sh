@@ -3,6 +3,7 @@ set -e
 
 export BUILDKIT_VERSION="v0.5.1"
 
+curl "https://raw.githubusercontent.com/moby/buildkit/$BUILDKIT_VERSION/api/services/control/control.proto" > proto/github.com/moby/buildkit/api/services/control/control.proto
 curl "https://raw.githubusercontent.com/moby/buildkit/$BUILDKIT_VERSION/api/types/worker.proto" > proto/github.com/moby/buildkit/api/types/worker.proto
 curl "https://raw.githubusercontent.com/moby/buildkit/$BUILDKIT_VERSION/frontend/gateway/pb/gateway.proto" > proto/github.com/moby/buildkit/frontend/gateway/pb/gateway.proto
 curl "https://raw.githubusercontent.com/moby/buildkit/$BUILDKIT_VERSION/solver/pb/ops.proto" > proto/github.com/moby/buildkit/solver/pb/ops.proto
