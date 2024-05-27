@@ -16,7 +16,10 @@ pub struct MakeDirOperation<'a> {
 
     make_parents: bool,
 
+    #[allow(dead_code)]
     description: HashMap<String, String>,
+
+    #[allow(dead_code)]
     caps: HashMap<String, bool>,
 }
 

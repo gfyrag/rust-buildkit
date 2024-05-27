@@ -16,7 +16,10 @@ pub struct MakeFileOperation<'a> {
 
     data: Option<Vec<u8>>,
 
+    #[allow(dead_code)]
     description: HashMap<String, String>,
+
+    #[allow(dead_code)]
     caps: HashMap<String, bool>,
 }
 
